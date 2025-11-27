@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8" />
+  <title>Stock Overflow</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root { color-scheme: light dark; }
+    body{font-family:system-ui,Arial;margin:24px;max-width:980px}
+    header{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:12px}
+    form, table{width:100%;margin:12px 0}
+    input, select, button{padding:8px;margin:4px}
+    table{border-collapse:collapse;width:100%}
+    th,td{border:1px solid #ddd;padding:8px}
+    th{background:#f6f6f6}
+    #auth{display:flex;gap:8px;align-items:center}
+    .muted{opacity:.75}
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1 style="margin:0">Stock Overflow — HQs & Livros</h1>
+      <div id="totais" class="muted">Resumo do Estoque: carregando…</div>
+    </div>
+    <div>
+      <a href="/health" target="_blank">/health</a>
+      <div id="auth">
+        <span id="user-info" style="font-weight:600;"></span>
+        <form id="form-login" style="display:flex;gap:6px;align-items:center;">
+          <input id="login-email"  type="email"  placeholder="email"  autocomplete="username"/>
+          <input id="login-senha"  type="password" placeholder="senha" autocomplete="current-password"/>
+          <button id="btn-login"  type="submit">Login</button>
+        </form>
+        <button id="btn-logout" style="display:none;">Logout</button>
+      </div>
+    </div>
+  </header>
+
+  <section>
+    <h2>Novo Produto</h2>
+    <form id="form-produto">
+      <input name="titulo" placeholder="Título" required />
+      <input name="autor"  placeholder="Autor" />
+      <select name="tipo">
+        <option value="HQ">HQ</option>
+        <option value="LIVRO">LIVRO</option>
+      </select>
+      <input name="quantidade" type="number" placeholder="Qtd inicial" value="0" />
+      <button>Salvar</button>
+    </form>
+  </section>
+
+  <section>
+    <h2>Produtos</h2>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <input id="busca" placeholder="Buscar por título..." />
+      <button id="btn-buscar">Buscar</button>
+      <label>Tipo:
+        <select id="filtro-tipo">
+          <option value="">Todos</option>
+          <option value="HQ">HQ</option>
+          <option value="LIVRO">LIVRO</option>
+        </select>
+      </label>
+    </div>
+
+    <table>
+      <thead>
+        <tr><th>ID</th><th>Título</th><th>Autor</th><th>Tipo</th><th>Qtd</th></tr>
+      </thead>
+      <tbody id="lista"><tr><td colspan="5" class="muted">carregando…</td></tr></tbody>
+    </table>
+
+    <div id="paginacao" style="margin:8px 0">
+      <button id="prev">« Anterior</button>
+      <span id="pageInfo" style="margin:0 8px"></span>
+      <button id="next">Próxima »</button>
+    </div>
+  </section>	
+
+  <script>
+    // --------- estado ----------
+    const state = {
+      page: 1, limit: 10, q: '', tipo: '',
+      token: localStorage.getItem('token') || '',
+      user: JSON.parse(localStorage.getItem('user') || 'null')
+    };
+
+    // --------- helpers ----------
+    function setText(id, text){ const el = document.getElementById(id); if(el) el.textContent = text; }
+    function authHeaders(h={}) {
+      if (state.token) h.Authorization = `Bearer ${state.token}`;
+      return h;
+    }
+    async function jsonFetch(url, opts = {}) {
+  // junta as opções primeiro…
+  const merged = { ...opts };
+  // …e garante que o Content-Type NUNCA seja perdido
+  merged.headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+
+  const r = await fetch(url, merged);
+  let data = null;
+  try { data = await r.json(); } catch { /* sem corpo */ }
+  if (!r.ok) throw new Error((data && (data.error || data.message)) || r.statusText);
+  return data;
+}
+    function refreshAuthUI(){
+      const form = document.getElementById('form-login');
+      const out = document.getElementById('btn-logout');
+      const info = document.getElementById('user-info');
+      if (state.token && state.user) {
+        form.style.display = 'none'; out.style.display='inline-block';
+        info.textContent = `👤 ${state.user.nome||state.user.email||'Usuário'}`;
+      } else {
+        form.style.display = 'flex'; out.style.display='none'; info.textContent='';
+      }
+    }
+
+    // --------- UI ----------
+    async function carregarResumo(){
+      try {
+        const r = await fetch('/relatorios/estoque'); // se não existir, só ignora
+        if (!r.ok) throw 0;
+        const j = await r.json();
+        const HQs = j.HQs ?? 0, Livros = j.Livros ?? 0, Total = j.Total ?? (HQs+Livros);
+        setText('totais', `Resumo do Estoque: HQs ${HQs} · Livros ${Livros} · Total ${Total}`);
+      } catch { setText('totais', 'Resumo do Estoque: indisponível'); }
+    }
+
+    async function carregarLista(){
+      try{
+        const qs = new URLSearchParams({
+          q: state.q || '', tipo: state.tipo || '',
+          page: String(state.page), limit: String(state.limit),
+        });
+        const data = await jsonFetch(`/produtos?${qs}`);
+        const items = Array.isArray(data) ? data : (data.items || []);
+        document.getElementById('lista').innerHTML =
+          items.length
+            ? items.map(p => `<tr>
+                <td>${p.id}</td><td>${p.titulo}</td><td>${p.autor||''}</td>
+                <td>${p.tipo}</td><td>${p.quantidade}</td>
+              </tr>`).join('')
+            : `<tr><td colspan="5" class="muted">nenhum item</td></tr>`;
+        const curr = data.page ?? state.page, pages = data.pages ?? 1;
+        setText('pageInfo', `Página ${curr} de ${pages}`);
+        document.getElementById('prev').disabled = curr<=1;
+        document.getElementById('next').disabled = curr>=pages;
+      }catch(e){
+        console.error(e);
+        document.getElementById('lista').innerHTML =
+          `<tr><td colspan="5" class="muted">erro ao carregar: ${e.message}</td></tr>`;
+      }
+    }
+
+    // --------- eventos ----------
+    document.addEventListener('DOMContentLoaded', () => {
+      // login
+      document.getElementById('form-login').onsubmit = async (e)=>{
+        e.preventDefault();
+        const email = document.getElementById('login-email').value.trim();
+        const senha = document.getElementById('login-senha').value.trim();
+        if(!email||!senha) return alert('Informe email e senha');
+        try{
+          const j = await jsonFetch('/auth/login', {
+            method:'POST',
+            body: JSON.stringify({ email, senha })
+          });
+          state.token = j.token || '';
+          state.user  = j.user  || null;
+          localStorage.setItem('token', state.token);
+          localStorage.setItem('user', JSON.stringify(state.user||{}));
+          refreshAuthUI();
+          alert('Login OK');
+        }catch(err){
+          alert('Falha no login: ' + err.message);
+        }
+      };
+      document.getElementById('btn-logout').onclick = ()=>{
+        state.token=''; state.user=null;
+        localStorage.removeItem('token'); localStorage.removeItem('user');
+        refreshAuthUI(); alert('Sessão encerrada');
+      };
+
+      // filtros e paginação
+      document.getElementById('btn-buscar').onclick = ()=>{ state.page=1; state.q=document.getElementById('busca').value||''; carregarLista(); };
+      document.getElementById('filtro-tipo').onchange = ()=>{ state.page=1; state.tipo=document.getElementById('filtro-tipo').value||''; carregarLista(); };
+      document.getElementById('prev').onclick = ()=>{ if(state.page>1){ state.page--; carregarLista(); } };
+      document.getElementById('next').onclick = ()=>{ state.page++; carregarLista(); };
+
+      // novo produto (requer token)
+      document.getElementById('form-produto').onsubmit = async (e)=>{
+        e.preventDefault();
+        if(!state.token) return alert('Faça login primeiro.');
+        const f = new FormData(e.target);
+        const body = Object.fromEntries(f.entries());
+        body.quantidade = Number(body.quantidade||0);
+        try{
+          const j = await jsonFetch('/produtos', {
+            method:'POST',
+            headers: authHeaders(),
+            body: JSON.stringify(body)
+          });
+          alert('Salvo: ' + (j.titulo||'produto'));
+          e.target.reset();
+          state.page=1; carregarLista();
+        }catch(err){
+          alert('Erro ao salvar: ' + err.message);
+        }
+      };
+
+      // start
+      refreshAuthUI();
+      carregarResumo();  // não bloqueia a lista se falhar
+      carregarLista();
+    });
+  </script>
+</body>
+</html>

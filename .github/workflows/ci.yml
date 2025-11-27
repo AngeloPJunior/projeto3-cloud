@@ -1,0 +1,72 @@
+name: CI - Tests
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: rootpass
+          MYSQL_DATABASE: stock_overflow
+          MYSQL_USER: stock
+          MYSQL_PASSWORD: stockpass
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -prootpass || exit 1"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    env:
+      NODE_ENV: test
+      HOST: 0.0.0.0
+      PORT: 3000
+
+      DB_HOST: 127.0.0.1
+      DB_PORT: 3306
+      DB_NAME: stock_overflow
+      DB_USER: stock
+      DB_PASS: stockpass
+
+      JWT_SECRET: teste-jwt
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Wait for MySQL to be healthy
+        run: |
+          for i in `seq 1 30`; do
+            if mysqladmin ping -h 127.0.0.1 -uroot -prootpass --silent; then
+              echo "MySQL is up!"
+              break
+            fi
+            echo "Waiting for MySQL..."
+            sleep 2
+          done
+
+      - name: Run DB sync and seed
+        run: |
+          npm run db:sync
+          npm run db:seed
+          npm run db:seed:user
+
+      - name: Run tests (unit + integration)
+        run: npm test

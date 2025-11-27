@@ -1,0 +1,30 @@
+version: "3.9"
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: stock_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpass
+      MYSQL_DATABASE: stock_overflow
+      MYSQL_USER: stock
+      MYSQL_PASSWORD: stockpass
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+
+  api:
+    build: .
+    container_name: stock_api
+    restart: unless-stopped
+    depends_on:
+      - mysql
+    env_file: .env
+    ports:
+      - "3000:3000"
+    # Para desenvolvimento local está ótimo assim.
+
+volumes:
+  mysql_data:
